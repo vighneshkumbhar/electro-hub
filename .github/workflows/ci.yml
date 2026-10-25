@@ -1,70 +1,67 @@
-name: Continuous Integration
+name: CI/CD
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  validate-and-test:
-    name: Validate, Test, and Build
+  lint-and-test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
-          cache-dependency-path: |
-            apps/web/package-lock.json
-            packages/search/package-lock.json
-
-      - name: Install Database Dependencies
+          node-version: '20'
+          cache: 'pnpm'
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install pnpm
+        run: npm install -g pnpm
+      
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      
+      - name: Install Python dependencies
         run: |
-          cd packages/database
-          npm ci
+          cd packages/ai
+          pip install -r requirements.txt
+      
+      - name: Lint
+        run: pnpm lint
+      
+      - name: Type check
+        run: pnpm typecheck
+      
+      - name: Test
+        run: pnpm test
+      
+      - name: Build
+        run: pnpm build
 
-      - name: Validate Prisma Schema
-        run: |
-          npx prisma validate --schema=schema.prisma
-        working-directory: packages/database
-        env:
-          DATABASE_URL: postgresql://postgres:password@localhost:5432/electrohub
-
-      - name: Install Search Dependencies & Run Tests
-        run: |
-          cd packages/search
-          npm ci
-          npm run test
-
-      - name: Install Web App Dependencies
-        run: |
-          cd apps/web
-          npm ci
-
-      - name: Generate Prisma Client for Web App
-        run: |
-          npx prisma generate --schema=../../packages/database/schema.prisma
-        working-directory: apps/web
-
-      - name: Run Web App Linter
-        run: |
-          cd apps/web
-          npm run lint
-
-      - name: Build Next.js Web App
-        run: |
-          cd apps/web
-          npm run build
-        env:
-          NEXT_TELEMETRY_DISABLED: 1
-          DATABASE_URL: postgresql://postgres:password@localhost:5432/electrohub
-          TYPESENSE_API_KEY: xyz123
-          TYPESENSE_HOST: localhost
-          REDIS_URL: redis://localhost:6379
-          NEXTAUTH_SECRET: supersecretnextauthsecretkey
+  deploy-web:
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
